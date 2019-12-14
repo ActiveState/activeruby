@@ -34,9 +34,6 @@ class TestEncoding < Test::Unit::TestCase
       assert_raise(TypeError) { e.dup }
       assert_raise(TypeError) { e.clone }
       assert_equal(e.object_id, Marshal.load(Marshal.dump(e)).object_id)
-      assert_not_predicate(e, :tainted?)
-      Marshal.load(Marshal.dump(e).taint)
-      assert_not_predicate(e, :tainted?, '[ruby-core:71793] [Bug #11760]')
     end
   end
 
@@ -117,11 +114,24 @@ class TestEncoding < Test::Unit::TestCase
   end
 
   def test_errinfo_after_autoload
+    assert_separately(%w[--disable=gems], "#{<<~"begin;"}\n#{<<~'end;'}")
     bug9038 = '[ruby-core:57949] [Bug #9038]'
-    assert_separately(%w[--disable=gems], <<-"end;")
-      assert_raise_with_message(SyntaxError, /unknown regexp option - Q/, #{bug9038.dump}) {
+    begin;
+      e = assert_raise_with_message(SyntaxError, /unknown regexp option - Q/, bug9038) {
         eval("/regexp/sQ")
       }
+      assert_include(e.message, "/regexp/sQ\n")
+    end;
+  end
+
+  def test_nonascii_library_path
+    assert_separately([], "#{<<~"begin;"}\n#{<<~'end;'}".force_encoding("US-ASCII"))
+    begin;
+      assert_equal(Encoding::US_ASCII, __ENCODING__)
+      $:.unshift("/\x80")
+      assert_raise_with_message(LoadError, /\[Bug #16382\]/) do
+        $:.resolve_feature_path "[Bug #16382]"
+      end
     end;
   end
 end

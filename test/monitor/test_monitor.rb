@@ -1,6 +1,5 @@
 # frozen_string_literal: false
 require "monitor"
-require "thread"
 
 require "test/unit"
 
@@ -34,6 +33,29 @@ class TestMonitor < Test::Unit::TestCase
     }
     assert_join_threads([th, th2])
     assert_equal((1..10).to_a, ary)
+  end
+
+  def test_exit
+    m = Monitor.new
+    m.enter
+    assert_equal true, m.mon_owned?
+    m.exit
+    assert_equal false, m.mon_owned?
+
+    assert_raise ThreadError do
+      m.exit
+    end
+
+    assert_equal false, m.mon_owned?
+
+    m.enter
+    Thread.new{
+      assert_raise(ThreadError) do
+        m.exit
+      end
+    }.join
+    assert_equal true, m.mon_owned?
+    m.exit
   end
 
   def test_enter_second_after_killed_thread
@@ -146,6 +168,37 @@ class TestMonitor < Test::Unit::TestCase
     assert_join_threads([th, th2])
   end
 
+  def test_mon_locked_and_owned
+    queue1 = Queue.new
+    queue2 = Queue.new
+    th = Thread.start {
+      @monitor.enter
+      queue1.enq(nil)
+      queue2.deq
+      @monitor.exit
+      queue1.enq(nil)
+    }
+    queue1.deq
+    assert(@monitor.mon_locked?)
+    assert(!@monitor.mon_owned?)
+
+    queue2.enq(nil)
+    queue1.deq
+    assert(!@monitor.mon_locked?)
+
+    @monitor.enter
+    assert @monitor.mon_locked?
+    assert @monitor.mon_owned?
+    @monitor.exit
+
+    @monitor.synchronize do
+      assert @monitor.mon_locked?
+      assert @monitor.mon_owned?
+    end
+  ensure
+    th.join
+  end
+
   def test_cond
     cond = @monitor.new_cond
 
@@ -168,6 +221,19 @@ class TestMonitor < Test::Unit::TestCase
       end
     end
     assert_join_threads([th, th2])
+  end
+
+  class NewCondTest
+    include MonitorMixin
+    attr_reader :cond
+    def initialize
+      @cond = new_cond
+      super # mon_initialize
+    end
+  end
+
+  def test_new_cond_before_initialize
+    assert NewCondTest.new.cond.instance_variable_get(:@monitor) != nil
   end
 
   def test_timedwait
@@ -240,5 +306,27 @@ class TestMonitor < Test::Unit::TestCase
 #       assert_equal("bar", d)
 #     end
 #     cumber_thread.kill
+  end
+
+  def test_wait_interruption
+    cond = @monitor.new_cond
+
+    th = Thread.start {
+      @monitor.synchronize do
+        begin
+          cond.wait(0.1)
+          @monitor.mon_owned?
+        rescue Interrupt
+          @monitor.mon_owned?
+        end
+      end
+    }
+    sleep(0.1)
+    th.raise(Interrupt)
+
+    begin
+      assert_equal true, th.value
+    rescue Interrupt
+    end
   end
 end

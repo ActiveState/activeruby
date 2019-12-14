@@ -1,7 +1,6 @@
 # frozen_string_literal: false
 require 'test/unit'
 require 'tempfile'
-require "thread"
 require "-test-/file"
 require_relative 'ut_eof'
 
@@ -88,7 +87,7 @@ class TestFile < Test::Unit::TestCase
   end
 
   def test_bom_32le
-    assert_bom(["\xFF\xFE\0", "\0"], __method__)
+    assert_bom(["\xFF", "\xFE\0\0"], __method__)
   end
 
   def test_truncate_wbuf
@@ -148,8 +147,8 @@ class TestFile < Test::Unit::TestCase
   end
 
   def test_read_all_extended_file
-    [nil, {:textmode=>true}, {:binmode=>true}].each do |mode|
-      Tempfile.create("test-extended-file", mode) {|f|
+    [{}, {:textmode=>true}, {:binmode=>true}].each do |mode|
+      Tempfile.create("test-extended-file", **mode) {|f|
         assert_nil(f.getc)
         f.print "a"
         f.rewind
@@ -159,8 +158,8 @@ class TestFile < Test::Unit::TestCase
   end
 
   def test_gets_extended_file
-    [nil, {:textmode=>true}, {:binmode=>true}].each do |mode|
-      Tempfile.create("test-extended-file", mode) {|f|
+    [{}, {:textmode=>true}, {:binmode=>true}].each do |mode|
+      Tempfile.create("test-extended-file", **mode) {|f|
         assert_nil(f.getc)
         f.print "a"
         f.rewind
@@ -170,8 +169,8 @@ class TestFile < Test::Unit::TestCase
   end
 
   def test_gets_para_extended_file
-    [nil, {:textmode=>true}, {:binmode=>true}].each do |mode|
-      Tempfile.create("test-extended-file", mode) {|f|
+    [{}, {:textmode=>true}, {:binmode=>true}].each do |mode|
+      Tempfile.create("test-extended-file", **mode) {|f|
         assert_nil(f.getc)
         f.print "\na"
         f.rewind
@@ -181,8 +180,8 @@ class TestFile < Test::Unit::TestCase
   end
 
   def test_each_char_extended_file
-    [nil, {:textmode=>true}, {:binmode=>true}].each do |mode|
-      Tempfile.create("test-extended-file", mode) {|f|
+    [{}, {:textmode=>true}, {:binmode=>true}].each do |mode|
+      Tempfile.create("test-extended-file", **mode) {|f|
         assert_nil(f.getc)
         f.print "a"
         f.rewind
@@ -194,8 +193,8 @@ class TestFile < Test::Unit::TestCase
   end
 
   def test_each_byte_extended_file
-    [nil, {:textmode=>true}, {:binmode=>true}].each do |mode|
-      Tempfile.create("test-extended-file", mode) {|f|
+    [{}, {:textmode=>true}, {:binmode=>true}].each do |mode|
+      Tempfile.create("test-extended-file", **mode) {|f|
         assert_nil(f.getc)
         f.print "a"
         f.rewind
@@ -207,8 +206,8 @@ class TestFile < Test::Unit::TestCase
   end
 
   def test_getc_extended_file
-    [nil, {:textmode=>true}, {:binmode=>true}].each do |mode|
-      Tempfile.create("test-extended-file", mode) {|f|
+    [{}, {:textmode=>true}, {:binmode=>true}].each do |mode|
+      Tempfile.create("test-extended-file", **mode) {|f|
         assert_nil(f.getc)
         f.print "a"
         f.rewind
@@ -218,8 +217,8 @@ class TestFile < Test::Unit::TestCase
   end
 
   def test_getbyte_extended_file
-    [nil, {:textmode=>true}, {:binmode=>true}].each do |mode|
-      Tempfile.create("test-extended-file", mode) {|f|
+    [{}, {:textmode=>true}, {:binmode=>true}].each do |mode|
+      Tempfile.create("test-extended-file", **mode) {|f|
         assert_nil(f.getc)
         f.print "a"
         f.rewind
@@ -253,6 +252,10 @@ class TestFile < Test::Unit::TestCase
       tst = realdir + (File::SEPARATOR*3 + ".")
       assert_equal(realdir, File.realpath(tst))
       assert_equal(realdir, File.realpath(".", tst))
+      assert_equal(realdir, Dir.chdir(realdir) {File.realpath(".")})
+      realpath = File.join(realdir, "test")
+      File.write(realpath, "")
+      assert_equal(realpath, Dir.chdir(realdir) {File.realpath("test")})
       if File::ALT_SEPARATOR
         bug2961 = '[ruby-core:28653]'
         assert_equal(realdir, File.realpath(realdir.tr(File::SEPARATOR, File::ALT_SEPARATOR)), bug2961)
@@ -284,6 +287,14 @@ class TestFile < Test::Unit::TestCase
     }
   end
 
+  def test_realpath_special_symlink
+    IO.pipe do |r, w|
+      if File.pipe?(path = "/dev/fd/#{r.fileno}")
+        assert_file.identical?(File.realpath(path), path)
+      end
+    end
+  end
+
   def test_realdirpath
     Dir.mktmpdir('rubytest-realdirpath') {|tmpdir|
       realdir = File.realpath(tmpdir)
@@ -291,6 +302,8 @@ class TestFile < Test::Unit::TestCase
       assert_equal(realdir, File.realdirpath(tst))
       assert_equal(realdir, File.realdirpath(".", tst))
       assert_equal(File.join(realdir, "foo"), File.realdirpath("foo", tst))
+      assert_equal(realdir, Dir.chdir(realdir) {File.realdirpath(".")})
+      assert_equal(File.join(realdir, "foo"), Dir.chdir(realdir) {File.realdirpath("foo")})
     }
     begin
       result = File.realdirpath("bar", "//:/foo")
@@ -438,17 +451,7 @@ class TestFile < Test::Unit::TestCase
     end
   end
 
-  def test_untainted_path
-    bug5374 = '[ruby-core:39745]'
-    cwd = ("./"*40+".".taint).dup.untaint
-    in_safe = proc {|safe| $SAFE = safe; File.stat(cwd)}
-    assert_not_send([cwd, :tainted?])
-    (0..1).each do |level|
-      assert_nothing_raised(SecurityError, bug5374) {in_safe[level]}
-    end
-  end
-
-  if /(bcc|ms|cyg)win|mingw|emx/ =~ RUBY_PLATFORM
+  if /mswin|mingw/ =~ RUBY_PLATFORM
     def test_long_unc
       feature3399 = '[ruby-core:30623]'
       path = File.expand_path(__FILE__)
@@ -466,6 +469,49 @@ class TestFile < Test::Unit::TestCase
         open(path + "\0bar", "w") {}
       end
       assert_file.not_exist?(path)
+    end
+  end
+
+  def test_open_tempfile_path
+    Dir.mktmpdir(__method__.to_s) do |tmpdir|
+      begin
+        io = File.open(tmpdir, File::RDWR | File::TMPFILE)
+      rescue Errno::EINVAL
+        skip 'O_TMPFILE not supported (EINVAL)'
+      rescue Errno::EISDIR
+        skip 'O_TMPFILE not supported (EISDIR)'
+      rescue Errno::EOPNOTSUPP
+        skip 'O_TMPFILE not supported (EOPNOTSUPP)'
+      end
+
+      io.write "foo"
+      io.flush
+      assert_equal 3, io.size
+      assert_raise(IOError) { io.path }
+    ensure
+      io&.close
+    end
+  end if File::Constants.const_defined?(:TMPFILE)
+
+  def test_absolute_path?
+    assert_file.absolute_path?(File.absolute_path(__FILE__))
+    assert_file.absolute_path?("//foo/bar\\baz")
+    assert_file.not_absolute_path?(File.basename(__FILE__))
+    assert_file.not_absolute_path?("C:foo\\bar")
+    assert_file.not_absolute_path?("~")
+    assert_file.not_absolute_path?("~user")
+
+    if /cygwin|mswin|mingw/ =~ RUBY_PLATFORM
+      assert_file.absolute_path?("C:\\foo\\bar")
+      assert_file.absolute_path?("C:/foo/bar")
+    else
+      assert_file.not_absolute_path?("C:\\foo\\bar")
+      assert_file.not_absolute_path?("C:/foo/bar")
+    end
+    if /mswin|mingw/ =~ RUBY_PLATFORM
+      assert_file.not_absolute_path?("/foo/bar\\baz")
+    else
+      assert_file.absolute_path?("/foo/bar\\baz")
     end
   end
 end

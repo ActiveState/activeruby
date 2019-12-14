@@ -9,8 +9,13 @@
 
 # prelude
 prelude.rb
-
 rbconfig.rb
+
+trace_point.rb
+ast.rb
+io.rb
+gc.rb
+pack.rb
 
 # the lib/ directory (which has its own .document file)
 lib
@@ -19,11 +24,18 @@ lib
 ext
 
 # rdoc files
-ChangeLog
-
 NEWS
 
 README.md
 README.ja.md
+
+COPYING
+COPYING.ja
+CONTRIBUTING.md
+
+LEGAL
+
+# win32/README.win32 linked from README.md
+win32
 
 doc

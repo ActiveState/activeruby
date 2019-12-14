@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 require 'test/unit'
 require 'tempfile'
-require 'thread'
 
 class TestTempfile < Test::Unit::TestCase
   def initialize(*)
@@ -9,8 +8,8 @@ class TestTempfile < Test::Unit::TestCase
     @tempfile = nil
   end
 
-  def tempfile(*args, &block)
-    t = Tempfile.new(*args, &block)
+  def tempfile(*args, **kw, &block)
+    t = Tempfile.new(*args, **kw, &block)
     @tempfile = (t unless block)
   end
 
@@ -30,15 +29,6 @@ class TestTempfile < Test::Unit::TestCase
     t.write("hello world")
     t.close
     assert_equal "hello world", File.read(path)
-  end
-
-  def test_saves_in_dir_tmpdir_by_default
-    t = tempfile("foo")
-    assert_equal Dir.tmpdir, File.dirname(t.path)
-    bug3733 = '[ruby-dev:42089]'
-    assert_nothing_raised(SecurityError, bug3733) {
-      proc {$SAFE = 1; File.expand_path(Dir.tmpdir)}.call
-    }
   end
 
   def test_saves_in_given_directory
@@ -360,7 +350,7 @@ puts Tempfile.new('foo').path
     f.close
     assert_file.exist?(path)
   ensure
-    f.close if f && !f.closed?
+    f&.close
     File.unlink path if path
   end
 
@@ -372,5 +362,44 @@ puts Tempfile.new('foo').path
     }
     assert_file.not_exist?(path)
   end
-end
 
+  def test_open_traversal_dir
+    assert_mktmpdir_traversal do |traversal_path|
+      t = Tempfile.open([traversal_path, 'foo'])
+      t.path
+    ensure
+      t&.close!
+    end
+  end
+
+  def test_new_traversal_dir
+    assert_mktmpdir_traversal do |traversal_path|
+      t = Tempfile.new(traversal_path + 'foo')
+      t.path
+    ensure
+      t&.close!
+    end
+  end
+
+  def test_create_traversal_dir
+    assert_mktmpdir_traversal do |traversal_path|
+      t = Tempfile.create(traversal_path + 'foo')
+      t.path
+    ensure
+      if t
+        t.close
+        File.unlink(t.path)
+      end
+    end
+  end
+
+  def assert_mktmpdir_traversal
+    Dir.mktmpdir do |target|
+      target = target.chomp('/') + '/'
+      traversal_path = target.sub(/\A\w:/, '') # for DOSISH
+      traversal_path = Array.new(target.count('/')-2, '..').join('/') + traversal_path
+      actual = yield traversal_path
+      assert_not_send([File.absolute_path(actual), :start_with?, target])
+    end
+  end
+end

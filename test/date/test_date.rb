@@ -6,6 +6,19 @@ class DateSub < Date; end
 class DateTimeSub < DateTime; end
 
 class TestDate < Test::Unit::TestCase
+  def test_range_infinite_float
+    today = Date.today
+    r = today...Float::INFINITY
+    assert_equal today, r.begin
+    assert_equal Float::INFINITY, r.end
+    assert_equal true, r.cover?(today+1)
+    assert_equal false, r.cover?(today-1)
+    r = (-Float::INFINITY)...today
+    assert_equal(-Float::INFINITY, r.begin)
+    assert_equal today, r.end
+    assert_equal false, r.cover?(today+1)
+    assert_equal true, r.cover?(today-1)
+  end
 
   def test__const
     assert_nil(Date::MONTHNAMES[0])
@@ -129,6 +142,8 @@ class TestDate < Test::Unit::TestCase
     assert_equal(3, h.size)
     assert_equal(9, h[Date.new(1999,5,25)])
     assert_equal(9, h[DateTime.new(1999,5,25)])
+
+    assert_instance_of(String, Date.new(1999,5,25).hash.to_s)
   end
 
   def test_freeze

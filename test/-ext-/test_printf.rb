@@ -24,6 +24,8 @@ class Test_SPrintf < Test::Unit::TestCase
     assert_equal('["\n"]', Bug::Printf.q("\n"))
     assert_equal('[aaa]', Bug::Printf.q('aaa'))
     assert_equal('[a a]', Bug::Printf.q('a a'))
+    assert_equal('[]', Bug::Printf.q(''))
+    assert_equal('[""]', Bug::Printf.q(:''))
   end
 
   def test_encoding
@@ -31,15 +33,6 @@ class Test_SPrintf < Test::Unit::TestCase
       "\u{3042 3044 3046 3048 304a}"
     end
     assert_equal("<\u{3042 3044 3046 3048 304a}>", Bug::Printf.s(self))
-  end
-
-  def test_taint
-    obj = Object.new.taint
-    assert_equal({to_s: true, inspect: true},
-                 {
-                   to_s: Bug::Printf.s(obj).tainted?,
-                   inspect: Bug::Printf.v(obj).tainted?,
-                 })
   end
 
   VS = [
@@ -183,5 +176,9 @@ class Test_SPrintf < Test::Unit::TestCase
     assert_equal("a", Bug::Printf.("s", "a", prec: 3)[0])
     assert_equal("  a", Bug::Printf.("s", "a", width: 3, prec: 3)[0])
     assert_equal("a  ", Bug::Printf.("s", "a", minus: true, width: 3, prec: 3)[0])
+  end
+
+  def test_snprintf_count
+    assert_equal(3, Bug::Printf.sncount("foo"))
   end
 end

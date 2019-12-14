@@ -1,7 +1,6 @@
 require 'webrick'
 require 'drb/drb'
-require 'drb/http0'
-require 'thread'
+require_relative 'http0'
 
 module DRb
   module HTTP0
@@ -62,7 +61,7 @@ module DRb
 
       def accept
         client = @queue.pop
-        ServerSide.new(client, @config)
+        ServerSide.new(uri, client, @config)
       end
 
       def setup_webrick(uri)
@@ -80,12 +79,14 @@ module DRb
     end
 
     class ServerSide
-      def initialize(callback, config)
+      def initialize(uri, callback, config)
+        @uri = uri
         @callback = callback
         @config = config
         @msg = DRbMessage.new(@config)
         @req_stream = StrStream.new(@callback.req_body)
       end
+      attr_reader :uri
 
       def close
         @callback.close if @callback

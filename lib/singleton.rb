@@ -1,5 +1,4 @@
 # frozen_string_literal: false
-require 'thread'
 
 # The Singleton module implements the Singleton pattern.
 #
@@ -59,10 +58,9 @@ require 'thread'
 # == Singleton and Marshal
 #
 # By default Singleton's #_dump(depth) returns the empty string. Marshalling by
-# default will strip state information, e.g. instance variables and taint
-# state, from the instance. Classes using Singleton can provide custom
-# _load(str) and _dump(depth) methods to retain some of the previous state of
-# the instance.
+# default will strip state information, e.g. instance variables from the instance.
+# Classes using Singleton can provide custom _load(str) and _dump(depth) methods
+# to retain some of the previous state of the instance.
 #
 #    require 'singleton'
 #
@@ -83,7 +81,6 @@ require 'thread'
 #    a = Example.instance
 #    a.keep = "keep this"
 #    a.strip = "get rid of this"
-#    a.taint
 #
 #    stored_state = Marshal.dump(a)
 #
@@ -121,6 +118,15 @@ module Singleton
       instance
     end
 
+    def instance # :nodoc:
+      return @singleton__instance__ if @singleton__instance__
+      @singleton__mutex__.synchronize {
+        return @singleton__instance__ if @singleton__instance__
+        @singleton__instance__ = new()
+      }
+      @singleton__instance__
+    end
+
     private
 
     def inherited(sub_klass)
@@ -135,14 +141,6 @@ module Singleton
         @singleton__instance__ = nil
         @singleton__mutex__ = Thread::Mutex.new
       }
-      def klass.instance # :nodoc:
-        return @singleton__instance__ if @singleton__instance__
-        @singleton__mutex__.synchronize {
-          return @singleton__instance__ if @singleton__instance__
-          @singleton__instance__ = new()
-        }
-        @singleton__instance__
-      end
       klass
     end
 
@@ -170,4 +168,8 @@ module Singleton
   ##
   # :singleton-method: _load
   #  By default calls instance(). Override to retain singleton state.
+
+  ##
+  # :singleton-method: instance
+  #  Returns the singleton instance.
 end

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
-require 'uri'
-require 'fileutils'
+autoload :FileUtils, 'fileutils'
 
+require "rubygems/text"
 ##
 # A Source knows how to list and fetch gems from a RubyGems marshal index.
 #
@@ -11,12 +11,13 @@ require 'fileutils'
 class Gem::Source
 
   include Comparable
+  include Gem::Text
 
   FILES = { # :nodoc:
     :released   => 'specs',
     :latest     => 'latest_specs',
     :prerelease => 'prerelease_specs',
-  }
+  }.freeze
 
   ##
   # The URI this source will fetch gems from.
@@ -36,15 +37,6 @@ class Gem::Source
     end
 
     @uri = uri
-    @api_uri = nil
-  end
-
-  ##
-  # Use an SRV record on the host to look up the true endpoint for the index.
-
-  def api_uri # :nodoc:
-    require 'rubygems/remote_fetcher'
-    @api_uri ||= Gem::RemoteFetcher.fetcher.api_endpoint uri
   end
 
   ##
@@ -67,13 +59,17 @@ class Gem::Source
 
       return -1 if !other.uri
 
-      @uri.to_s <=> other.uri.to_s
+      # Returning 1 here ensures that when sorting a list of sources, the
+      # original ordering of sources supplied by the user is preserved.
+      return 1 unless @uri.to_s == other.uri.to_s
+
+      0
     else
       nil
     end
   end
 
-  def == other # :nodoc:
+  def ==(other) # :nodoc:
     self.class === other and @uri == other.uri
   end
 
@@ -83,9 +79,9 @@ class Gem::Source
   # Returns a Set that can fetch specifications from this source.
 
   def dependency_resolver_set # :nodoc:
-    return Gem::Resolver::IndexSet.new self if 'file' == api_uri.scheme
+    return Gem::Resolver::IndexSet.new self if 'file' == uri.scheme
 
-    bundler_api_uri = api_uri + './api/v1/dependencies'
+    bundler_api_uri = uri + './api/v1/dependencies'
 
     begin
       fetcher = Gem::RemoteFetcher.fetcher
@@ -93,7 +89,7 @@ class Gem::Source
     rescue Gem::RemoteFetcher::FetchError
       Gem::Resolver::IndexSet.new self
     else
-      if response.respond_to? :uri then
+      if response.respond_to? :uri
         Gem::Resolver::APISet.new response.uri
       else
         Gem::Resolver::APISet.new bundler_api_uri
@@ -111,7 +107,7 @@ class Gem::Source
   def cache_dir(uri)
     # Correct for windows paths
     escaped_path = uri.path.sub(/^\/([a-z]):\//i, '/\\1-/')
-    escaped_path.untaint
+    escaped_path.tap(&Gem::UNTAINT)
 
     File.join Gem.spec_cache_dir, "#{uri.host}%#{uri.port}", File.dirname(escaped_path)
   end
@@ -131,32 +127,32 @@ class Gem::Source
   ##
   # Fetches a specification for the given +name_tuple+.
 
-  def fetch_spec name_tuple
+  def fetch_spec(name_tuple)
     fetcher = Gem::RemoteFetcher.fetcher
 
     spec_file_name = name_tuple.spec_name
 
-    uri = api_uri + "#{Gem::MARSHAL_SPEC_DIR}#{spec_file_name}"
+    source_uri = uri + "#{Gem::MARSHAL_SPEC_DIR}#{spec_file_name}"
 
-    cache_dir = cache_dir uri
+    cache_dir = cache_dir source_uri
 
     local_spec = File.join cache_dir, spec_file_name
 
-    if File.exist? local_spec then
+    if File.exist? local_spec
       spec = Gem.read_binary local_spec
       spec = Marshal.load(spec) rescue nil
       return spec if spec
     end
 
-    uri.path << '.rz'
+    source_uri.path << '.rz'
 
-    spec = fetcher.fetch_path uri
-    spec = Gem.inflate spec
+    spec = fetcher.fetch_path source_uri
+    spec = Gem::Util.inflate spec
 
-    if update_cache? then
+    if update_cache?
       FileUtils.mkdir_p cache_dir
 
-      open local_spec, 'wb' do |io|
+      File.open local_spec, 'wb' do |io|
         io.write spec
       end
     end
@@ -180,7 +176,7 @@ class Gem::Source
     file       = FILES[type]
     fetcher    = Gem::RemoteFetcher.fetcher
     file_name  = "#{file}.#{Gem.marshal_version}"
-    spec_path  = api_uri + "#{file_name}.gz"
+    spec_path  = uri + "#{file_name}.gz"
     cache_dir  = cache_dir spec_path
     local_file = File.join(cache_dir, file_name)
     retried    = false
@@ -208,20 +204,25 @@ class Gem::Source
 
   def download(spec, dir=Dir.pwd)
     fetcher = Gem::RemoteFetcher.fetcher
-    fetcher.download spec, api_uri.to_s, dir
+    fetcher.download spec, uri.to_s, dir
   end
 
-  def pretty_print q # :nodoc:
+  def pretty_print(q) # :nodoc:
     q.group 2, '[Remote:', ']' do
       q.breakable
       q.text @uri.to_s
 
-      if api = api_uri
+      if api = uri
         q.breakable
         q.text 'API URI: '
         q.text api.to_s
       end
     end
+  end
+
+  def typo_squatting?(host, distance_threshold=4)
+    return if @uri.host.nil?
+    levenshtein_distance(@uri.host, host) <= distance_threshold
   end
 
 end
@@ -232,4 +233,3 @@ require 'rubygems/source/specific_file'
 require 'rubygems/source/local'
 require 'rubygems/source/lock'
 require 'rubygems/source/vendor'
-

@@ -1,4 +1,4 @@
-# frozen_string_literal: false
+# frozen_string_literal: true
 begin
   require_relative 'helper'
 rescue LoadError
@@ -9,8 +9,6 @@ module Fiddle
     def dlwrap arg
       Fiddle.dlwrap arg
     end
-
-    include Test::Unit::Assertions
 
     def test_cptr_to_int
       null = Fiddle::NULL
@@ -81,7 +79,6 @@ module Fiddle
     def test_to_ptr_string
       str = "hello world"
       ptr = Pointer[str]
-      assert ptr.tainted?, 'pointer should be tainted'
       assert_equal str.length, ptr.size
       assert_equal 'hello', ptr[0,5]
     end
@@ -154,11 +151,7 @@ module Fiddle
     def test_free=
       assert_normal_exit(<<-"End", '[ruby-dev:39269]')
         require 'fiddle'
-        Fiddle::LIBC_SO = #{Fiddle::LIBC_SO.dump}
-        Fiddle::LIBM_SO = #{Fiddle::LIBM_SO.dump}
         include Fiddle
-        @libc = dlopen(LIBC_SO)
-        @libm = dlopen(LIBM_SO)
         free = Fiddle::Function.new(Fiddle::RUBY_FREE, [TYPE_VOIDP], TYPE_VOID)
         ptr = Fiddle::Pointer.malloc(4)
         ptr.free = free

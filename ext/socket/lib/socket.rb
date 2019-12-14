@@ -77,7 +77,7 @@ class Addrinfo
       sock
     end
   end
-  private :connect_internal
+  protected :connect_internal
 
   # :call-seq:
   #   addrinfo.connect_from([local_addr_args], [opts]) {|socket| ... }
@@ -158,7 +158,7 @@ class Addrinfo
   #
   def connect_to(*args, timeout: nil, &block)
     remote_addrinfo = family_addrinfo(*args)
-    remote_addrinfo.send(:connect_internal, self, timeout, &block)
+    remote_addrinfo.connect_internal(self, timeout, &block)
   end
 
   # creates a socket bound to self.
@@ -223,8 +223,8 @@ class Addrinfo
   #   #   #<Addrinfo: [::1]:80 TCP (:80)>
   #   #   #<Addrinfo: [::1]:80 UDP (:80)>
   #
-  def self.foreach(nodename, service, family=nil, socktype=nil, protocol=nil, flags=nil, &block)
-    Addrinfo.getaddrinfo(nodename, service, family, socktype, protocol, flags).each(&block)
+  def self.foreach(nodename, service, family=nil, socktype=nil, protocol=nil, flags=nil, timeout: nil, &block)
+    Addrinfo.getaddrinfo(nodename, service, family, socktype, protocol, flags, timeout: timeout).each(&block)
   end
 end
 
@@ -336,6 +336,7 @@ class BasicSocket < IO
   # === Parameters
   # * +maxlen+ - the number of bytes to receive from the socket
   # * +flags+ - zero or more of the +MSG_+ options
+  # * +buf+ - destination String buffer
   # * +options+ - keyword hash, supporting `exception: false`
   #
   # === Example
@@ -445,19 +446,14 @@ class BasicSocket < IO
 
   # Linux-specific optimizations to avoid fcntl for IO#read_nonblock
   # and IO#write_nonblock using MSG_DONTWAIT
-  # Do other platforms suport MSG_DONTWAIT reliably?
+  # Do other platforms support MSG_DONTWAIT reliably?
   if RUBY_PLATFORM =~ /linux/ && Socket.const_defined?(:MSG_DONTWAIT)
     def read_nonblock(len, str = nil, exception: true) # :nodoc:
-      case rv = __recv_nonblock(len, 0, str, exception)
-      when '' # recv_nonblock returns empty string on EOF
-        exception ? raise(EOFError, 'end of file reached') : nil
-      else
-        rv
-      end
+      __read_nonblock(len, str, exception)
     end
 
     def write_nonblock(buf, exception: true) # :nodoc:
-      __sendmsg_nonblock(buf, 0, nil, nil, exception)
+      __write_nonblock(buf, exception)
     end
   end
 end
@@ -610,6 +606,7 @@ class Socket < BasicSocket
   # _opts_ may have following options:
   #
   # [:connect_timeout] specify the timeout in seconds.
+  # [:resolv_timeout] specify the name resolution timeout in seconds.
   #
   # If a block is given, the block is called with the socket.
   # The value of the block is returned.
@@ -623,7 +620,7 @@ class Socket < BasicSocket
   #     puts sock.read
   #   }
   #
-  def self.tcp(host, port, local_host = nil, local_port = nil, connect_timeout: nil) # :yield: socket
+  def self.tcp(host, port, local_host = nil, local_port = nil, connect_timeout: nil, resolv_timeout: nil) # :yield: socket
     last_error = nil
     ret = nil
 
@@ -632,7 +629,7 @@ class Socket < BasicSocket
       local_addr_list = Addrinfo.getaddrinfo(local_host, local_port, nil, :STREAM, nil)
     end
 
-    Addrinfo.foreach(host, port, nil, :STREAM) {|ai|
+    Addrinfo.foreach(host, port, nil, :STREAM, timeout: resolv_timeout) {|ai|
       if local_addr_list
         local_addr = local_addr_list.find {|local_ai| local_ai.afamily == ai.afamily }
         next unless local_addr

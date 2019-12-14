@@ -175,16 +175,17 @@ rsock_socketpair0(int domain, int type, int protocol, int sv[2])
 {
     int ret;
     static int cloexec_state = -1; /* <0: unknown, 0: ignored, >0: working */
+    static const int default_flags = SOCK_CLOEXEC|RSOCK_NONBLOCK_DEFAULT;
 
     if (cloexec_state > 0) { /* common path, if SOCK_CLOEXEC is defined */
-        ret = socketpair(domain, type|SOCK_CLOEXEC, protocol, sv);
+        ret = socketpair(domain, type|default_flags, protocol, sv);
         if (ret == 0 && (sv[0] <= 2 || sv[1] <= 2)) {
             goto fix_cloexec; /* highly unlikely */
         }
         goto update_max_fd;
     }
     else if (cloexec_state < 0) { /* usually runs once only for detection */
-        ret = socketpair(domain, type|SOCK_CLOEXEC, protocol, sv);
+        ret = socketpair(domain, type|default_flags, protocol, sv);
         if (ret == 0) {
             cloexec_state = rsock_detect_cloexec(sv[0]);
             if ((cloexec_state == 0) || (sv[0] <= 2 || sv[1] <= 2))
@@ -213,6 +214,10 @@ rsock_socketpair0(int domain, int type, int protocol, int sv[2])
 fix_cloexec:
     rb_maygvl_fd_fix_cloexec(sv[0]);
     rb_maygvl_fd_fix_cloexec(sv[1]);
+    if (RSOCK_NONBLOCK_DEFAULT) {
+        rsock_make_fd_nonblock(sv[0]);
+        rsock_make_fd_nonblock(sv[1]);
+    }
 
 update_max_fd:
     rb_update_max_fd(sv[0]);
@@ -231,6 +236,10 @@ rsock_socketpair0(int domain, int type, int protocol, int sv[2])
 
     rb_fd_fix_cloexec(sv[0]);
     rb_fd_fix_cloexec(sv[1]);
+    if (RSOCK_NONBLOCK_DEFAULT) {
+        rsock_make_fd_nonblock(sv[0]);
+        rsock_make_fd_nonblock(sv[1]);
+    }
     return ret;
 }
 #endif /* !SOCK_CLOEXEC */
@@ -983,7 +992,18 @@ sock_sockaddr(struct sockaddr *addr, socklen_t len)
  * call-seq:
  *   Socket.gethostbyname(hostname) => [official_hostname, alias_hostnames, address_family, *address_list]
  *
- * Obtains the host information for _hostname_.
+ * Use Addrinfo.getaddrinfo instead.
+ * This method is deprecated for the following reasons:
+ *
+ * - The 3rd element of the result is the address family of the first address.
+ *   The address families of the rest of the addresses are not returned.
+ * - Uncommon address representation:
+ *   4/16-bytes binary string to represent IPv4/IPv6 address.
+ * - gethostbyname() may take a long time and it may block other threads.
+ *   (GVL cannot be released since gethostbyname() is not thread safe.)
+ * - This method uses gethostbyname() function already removed from POSIX.
+ *
+ * This method obtains the host information for _hostname_.
  *
  *   p Socket.gethostbyname("hal") #=> ["localhost", ["hal"], 2, "\x7F\x00\x00\x01"]
  *
@@ -1000,13 +1020,29 @@ sock_s_gethostbyname(VALUE obj, VALUE host)
  * call-seq:
  *   Socket.gethostbyaddr(address_string [, address_family]) => hostent
  *
- * Obtains the host information for _address_.
+ * Use Addrinfo#getnameinfo instead.
+ * This method is deprecated for the following reasons:
+ *
+ * - Uncommon address representation:
+ *   4/16-bytes binary string to represent IPv4/IPv6 address.
+ * - gethostbyaddr() may take a long time and it may block other threads.
+ *   (GVL cannot be released since gethostbyname() is not thread safe.)
+ * - This method uses gethostbyname() function already removed from POSIX.
+ *
+ * This method obtains the host information for _address_.
  *
  *   p Socket.gethostbyaddr([221,186,184,68].pack("CCCC"))
  *   #=> ["carbon.ruby-lang.org", [], 2, "\xDD\xBA\xB8D"]
+ *
+ *   p Socket.gethostbyaddr([127,0,0,1].pack("CCCC"))
+ *   ["localhost", [], 2, "\x7F\x00\x00\x01"]
+ *   p Socket.gethostbyaddr(([0]*15+[1]).pack("C"*16))
+ *   #=> ["localhost", ["ip6-localhost", "ip6-loopback"], 10,
+ *        "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"]
+ *
  */
 static VALUE
-sock_s_gethostbyaddr(int argc, VALUE *argv)
+sock_s_gethostbyaddr(int argc, VALUE *argv, VALUE _)
 {
     VALUE addr, family;
     struct hostent *h;
@@ -1068,7 +1104,7 @@ sock_s_gethostbyaddr(int argc, VALUE *argv)
  *   Socket.getservbyname("syslog", "udp") #=> 514
  */
 static VALUE
-sock_s_getservbyname(int argc, VALUE *argv)
+sock_s_getservbyname(int argc, VALUE *argv, VALUE _)
 {
     VALUE service, proto;
     struct servent *sp;
@@ -1109,7 +1145,7 @@ sock_s_getservbyname(int argc, VALUE *argv)
  *
  */
 static VALUE
-sock_s_getservbyport(int argc, VALUE *argv)
+sock_s_getservbyport(int argc, VALUE *argv, VALUE _)
 {
     VALUE port, proto;
     struct servent *sp;
@@ -1128,7 +1164,7 @@ sock_s_getservbyport(int argc, VALUE *argv)
     if (!sp) {
 	rb_raise(rb_eSocket, "no such service for port %d/%s", (int)portnum, protoname);
     }
-    return rb_tainted_str_new2(sp->s_name);
+    return rb_str_new2(sp->s_name);
 }
 
 /*
@@ -1136,6 +1172,9 @@ sock_s_getservbyport(int argc, VALUE *argv)
  *   Socket.getaddrinfo(nodename, servname[, family[, socktype[, protocol[, flags[, reverse_lookup]]]]]) => array
  *
  * Obtains address information for _nodename_:_servname_.
+ *
+ * Note that Addrinfo.getaddrinfo provides the same functionality in
+ * an object oriented style.
  *
  * _family_ should be an address family such as: :INET, :INET6, etc.
  *
@@ -1164,7 +1203,7 @@ sock_s_getservbyport(int argc, VALUE *argv)
  * If Addrinfo object is preferred, use Addrinfo.getaddrinfo.
  */
 static VALUE
-sock_s_getaddrinfo(int argc, VALUE *argv)
+sock_s_getaddrinfo(int argc, VALUE *argv, VALUE _)
 {
     VALUE host, port, family, socktype, protocol, flags, ret, revlookup;
     struct addrinfo hints;
@@ -1218,7 +1257,7 @@ sock_s_getaddrinfo(int argc, VALUE *argv)
  * If Addrinfo object is preferred, use Addrinfo#getnameinfo.
  */
 static VALUE
-sock_s_getnameinfo(int argc, VALUE *argv)
+sock_s_getnameinfo(int argc, VALUE *argv, VALUE _)
 {
     VALUE sa, af = Qnil, host = Qnil, port = Qnil, flags, tmp;
     char *hptr, *pptr;
@@ -1287,7 +1326,7 @@ sock_s_getnameinfo(int argc, VALUE *argv)
 	    hptr = NULL;
 	}
 	else {
-	    strncpy(hbuf, StringValuePtr(host), sizeof(hbuf));
+	    strncpy(hbuf, StringValueCStr(host), sizeof(hbuf));
 	    hbuf[sizeof(hbuf) - 1] = '\0';
 	    hptr = hbuf;
 	}
@@ -1301,7 +1340,7 @@ sock_s_getnameinfo(int argc, VALUE *argv)
 	    pptr = pbuf;
 	}
 	else {
-	    strncpy(pbuf, StringValuePtr(port), sizeof(pbuf));
+	    strncpy(pbuf, StringValueCStr(port), sizeof(pbuf));
 	    pbuf[sizeof(pbuf) - 1] = '\0';
 	    pptr = pbuf;
 	}
@@ -1351,7 +1390,7 @@ sock_s_getnameinfo(int argc, VALUE *argv)
     errno = saved_errno;
     rsock_raise_socket_error("getnameinfo", error);
 
-    UNREACHABLE;
+    UNREACHABLE_RETURN(Qnil);
 }
 
 /*
@@ -1375,8 +1414,6 @@ sock_s_pack_sockaddr_in(VALUE self, VALUE port, VALUE host)
     VALUE addr = rb_str_new((char*)res->ai->ai_addr, res->ai->ai_addrlen);
 
     rb_freeaddrinfo(res);
-    OBJ_INFECT(addr, port);
-    OBJ_INFECT(addr, host);
 
     return addr;
 }
@@ -1418,7 +1455,6 @@ sock_s_unpack_sockaddr_in(VALUE self, VALUE addr)
 #endif
     }
     host = rsock_make_ipaddr((struct sockaddr*)sockaddr, RSTRING_SOCKLEN(addr));
-    OBJ_INFECT(host, addr);
     return rb_assoc_new(INT2NUM(ntohs(sockaddr->sin_port)), host);
 }
 
@@ -1448,7 +1484,6 @@ sock_s_pack_sockaddr_un(VALUE self, VALUE path)
     }
     memcpy(sockaddr.sun_path, RSTRING_PTR(path), RSTRING_LEN(path));
     addr = rb_str_new((char*)&sockaddr, rsock_unix_sockaddr_len(path));
-    OBJ_INFECT(addr, path);
 
     return addr;
 }
@@ -1485,7 +1520,6 @@ sock_s_unpack_sockaddr_un(VALUE self, VALUE addr)
 		 RSTRING_LEN(addr), (int)sizeof(struct sockaddr_un));
     }
     path = rsock_unixpath_str(sockaddr, RSTRING_SOCKLEN(addr));
-    OBJ_INFECT(path, addr);
     return path;
 }
 #endif

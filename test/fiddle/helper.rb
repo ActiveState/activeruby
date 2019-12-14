@@ -1,5 +1,5 @@
-# frozen_string_literal: false
-require 'minitest/autorun'
+# frozen_string_literal: true
+require 'test/unit'
 require 'fiddle'
 
 # FIXME: this is stolen from DL and needs to be refactored.
@@ -10,12 +10,28 @@ case RUBY_PLATFORM
 when /cygwin/
   libc_so = "cygwin1.dll"
   libm_so = "cygwin1.dll"
+when /android/
+  libdir = '/system/lib'
+  if [0].pack('L!').size == 8
+    libdir = '/system/lib64'
+  end
+  libc_so = File.join(libdir, "libc.so")
+  libm_so = File.join(libdir, "libm.so")
 when /linux/
   libdir = '/lib'
-  case [0].pack('L!').size
+  case RbConfig::SIZEOF['void*']
   when 4
     # 32-bit ruby
-    libdir = '/lib32' if File.directory? '/lib32'
+    case RUBY_PLATFORM
+    when /armv\w+-linux/
+      # In the ARM 32-bit libc package such as libc6:armhf libc6:armel,
+      # libc.so and libm.so are installed to /lib/arm-linux-gnu*.
+      # It's not installed to /lib32.
+      dirs = Dir.glob('/lib/arm-linux-gnu*')
+      libdir = dirs[0] if dirs && File.directory?(dirs[0])
+    else
+      libdir = '/lib32' if File.directory? '/lib32'
+    end
   when 8
     # 64-bit ruby
     libdir = '/lib64' if File.directory? '/lib64'
@@ -46,7 +62,7 @@ when /bsd|dragonfly/
   libm_so = "/usr/lib/libm.so"
 when /solaris/
   libdir = '/lib'
-  case [0].pack('L!').size
+  case RbConfig::SIZEOF['void*']
   when 4
     # 32-bit ruby
     libdir = '/lib' if File.directory? '/lib'
@@ -97,6 +113,9 @@ libm_so = nil if !libm_so || (libm_so[0] == ?/ && !File.file?(libm_so))
 
 if !libc_so || !libm_so
   ruby = EnvUtil.rubybin
+  # When the ruby binary is 32-bit and the host is 64-bit,
+  # `ldd ruby` outputs "not a dynamic executable" message.
+  # libc_so and libm_so are not set.
   ldd = `ldd #{ruby}`
   #puts ldd
   libc_so = $& if !libc_so && %r{/\S*/libc\.so\S*} =~ ldd
@@ -108,7 +127,7 @@ Fiddle::LIBC_SO = libc_so
 Fiddle::LIBM_SO = libm_so
 
 module Fiddle
-  class TestCase < MiniTest::Unit::TestCase
+  class TestCase < Test::Unit::TestCase
     def setup
       @libc = Fiddle.dlopen(LIBC_SO)
       @libm = Fiddle.dlopen(LIBM_SO)

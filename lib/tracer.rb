@@ -2,7 +2,6 @@
 #--
 # $Release Version: 0.3$
 # $Revision: 1.12 $
-require "thread"
 
 ##
 # Outputs a source level execution trace of a Ruby program.
@@ -61,6 +60,7 @@ require "thread"
 # by Keiju ISHITSUKA(keiju@ishitsuka.com)
 #
 class Tracer
+
   class << self
     # display additional debug information (defaults to false)
     attr_accessor :verbose
@@ -142,11 +142,13 @@ class Tracer
     stdout.print "Trace off\n" if Tracer.verbose?
   end
 
-  def add_filter(p = proc) # :nodoc:
+  def add_filter(p = nil, &b) # :nodoc:
+    p ||= b
     @filters.push p
   end
 
-  def set_get_line_procs(file, p = proc) # :nodoc:
+  def set_get_line_procs(file, p = nil, &b) # :nodoc:
+    p ||= b
     @get_line_procs[file] = p
   end
 
@@ -248,7 +250,8 @@ class Tracer
   #     puts "line number executed is #{line}"
   #   })
 
-  def Tracer.set_get_line_procs(file_name, p = proc)
+  def Tracer.set_get_line_procs(file_name, p = nil, &b)
+    p ||= b
     Single.set_get_line_procs(file_name, p)
   end
 
@@ -261,7 +264,8 @@ class Tracer
   #     "Kernel" == klass.to_s
   #   end
 
-  def Tracer.add_filter(p = proc)
+  def Tracer.add_filter(p = nil, &b)
+    p ||= b
     Single.add_filter(p)
   end
 end

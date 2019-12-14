@@ -9,11 +9,6 @@
 
 **********************************************************************/
 
-/* safe-level:
-   0 - strings from streams/environment/ARGV are tainted (default)
-   1 - no dangerous operation by tainted value
-*/
-
 #define SAFE_LEVEL_MAX RUBY_SAFE_LEVEL_MAX
 
 #include "ruby/ruby.h"
@@ -28,69 +23,91 @@
 int
 ruby_safe_level_2_warning(void)
 {
+    rb_warn("rb_safe_level_2_warning will be removed in Ruby 3.0");
     return 2;
 }
 
 int
 rb_safe_level(void)
 {
-    return GET_THREAD()->ec.safe_level;
+    rb_warn("rb_safe_level will be removed in Ruby 3.0");
+    return GET_VM()->safe_level_;
 }
 
 void
 rb_set_safe_level_force(int safe)
 {
-    GET_THREAD()->ec.safe_level = safe;
+    rb_warn("rb_set_safe_level_force will be removed in Ruby 3.0");
+    GET_VM()->safe_level_ = safe;
 }
 
 void
 rb_set_safe_level(int level)
 {
-    rb_thread_t *th = GET_THREAD();
+    rb_vm_t *vm = GET_VM();
 
-    if (level > th->ec.safe_level) {
-	if (level > SAFE_LEVEL_MAX) {
-	    rb_raise(rb_eArgError, "$SAFE=2 to 4 are obsolete");
-	}
-	th->ec.safe_level = level;
+    rb_warn("rb_set_safe_level will be removed in Ruby 3.0");
+    if (level > SAFE_LEVEL_MAX) {
+	rb_raise(rb_eArgError, "$SAFE=2 to 4 are obsolete");
+    }
+    else if (level < 0) {
+	rb_raise(rb_eArgError, "$SAFE should be >= 0");
+    }
+    else {
+	int line;
+	const char *path = rb_source_location_cstr(&line);
+
+	if (0) fprintf(stderr, "%s:%d $SAFE %d -> %d\n",
+		       path ? path : "-", line, vm->safe_level_, level);
+
+	vm->safe_level_ = level;
     }
 }
 
 static VALUE
-safe_getter(void)
+safe_getter(ID _x, VALUE *_y)
 {
-    return INT2NUM(rb_safe_level());
+    rb_warn("$SAFE will become a normal global variable in Ruby 3.0");
+    return INT2NUM(GET_VM()->safe_level_);
 }
 
 static void
-safe_setter(VALUE val)
+safe_setter(VALUE val, ID _x, VALUE *_y)
 {
     int level = NUM2INT(val);
-    rb_thread_t *th = GET_THREAD();
+    rb_vm_t *vm = GET_VM();
 
-    if (level < th->ec.safe_level) {
-	rb_raise(rb_eSecurityError,
-		 "tried to downgrade safe level from %d to %d",
-		 th->ec.safe_level, level);
-    }
+    rb_warn("$SAFE will become a normal global variable in Ruby 3.0");
     if (level > SAFE_LEVEL_MAX) {
-	rb_raise(rb_eArgError, "$SAFE=2 to 4 are obsolete");
+        rb_raise(rb_eArgError, "$SAFE=2 to 4 are obsolete");
     }
-    th->ec.safe_level = level;
+    else if (level < 0) {
+        rb_raise(rb_eArgError, "$SAFE should be >= 0");
+    }
+    else {
+        int line;
+        const char *path = rb_source_location_cstr(&line);
+
+        if (0) fprintf(stderr, "%s:%d $SAFE %d -> %d\n",
+                       path ? path : "-", line, vm->safe_level_, level);
+
+        vm->safe_level_ = level;
+    }
 }
 
 void
 rb_secure(int level)
 {
-    if (level <= rb_safe_level()) {
+    rb_warn("rb_secure will be removed in Ruby 3.0");
+    if (level <= GET_VM()->safe_level_) {
 	ID caller_name = rb_frame_callee();
 	if (caller_name) {
 	    rb_raise(rb_eSecurityError, "Insecure operation `%"PRIsVALUE"' at level %d",
-		     rb_id2str(caller_name), rb_safe_level());
+                     rb_id2str(caller_name), GET_VM()->safe_level_);
 	}
 	else {
 	    rb_raise(rb_eSecurityError, "Insecure operation at level %d",
-		     rb_safe_level());
+                     GET_VM()->safe_level_);
 	}
     }
 }
@@ -98,11 +115,13 @@ rb_secure(int level)
 void
 rb_secure_update(VALUE obj)
 {
+    rb_warn("rb_secure_update will be removed in Ruby 3.0");
 }
 
 void
 rb_insecure_operation(void)
 {
+    rb_warn("rb_insecure_operation will be removed in Ruby 3.0");
     ID caller_name = rb_frame_callee();
     if (caller_name) {
 	rb_raise(rb_eSecurityError, "Insecure operation - %"PRIsVALUE,
@@ -116,9 +135,7 @@ rb_insecure_operation(void)
 void
 rb_check_safe_obj(VALUE x)
 {
-    if (rb_safe_level() > 0 && OBJ_TAINTED(x)) {
-	rb_insecure_operation();
-    }
+    rb_warn("rb_check_safe_obj will be removed in Ruby 3.0");
 }
 
 void

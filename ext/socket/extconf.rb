@@ -433,6 +433,7 @@ end
 case RUBY_PLATFORM
 when /mswin(32|64)|mingw/
   test_func = "WSACleanup"
+  have_library("iphlpapi")
   have_library("ws2_32", "WSACleanup", headers)
 when /cygwin/
   test_func = "socket(0,0,0)"
@@ -443,6 +444,7 @@ else
   test_func = "socket(0,0,0)"
   have_library("nsl", 't_open("", 0, (struct t_info *)NULL)', headers) # SunOS
   have_library("socket", "socket(0,0,0)", headers) # SunOS
+  have_library("anl", 'getaddrinfo_a', headers)
 end
 
 if have_func(test_func, headers)
@@ -476,6 +478,7 @@ EOF
     have_func('inet_aton("", (struct in_addr *)0)', headers)
   have_func('getservbyport(0, "")', headers)
   have_func("getifaddrs((struct ifaddrs **)NULL)", headers)
+  have_struct_member("struct if_data", "ifi_vhid", headers) # FreeBSD
 
   have_func("getpeereid", headers)
 
@@ -503,6 +506,7 @@ EOF
   unless have_func("gethostname((char *)0, 0)", headers)
     have_func("uname((struct utsname *)NULL)", headers)
   end
+  have_func("getaddrinfo_a", headers)
 
   ipv6 = false
   default_ipv6 = /haiku/ !~ RUBY_PLATFORM
@@ -566,6 +570,7 @@ EOS
     getaddr_info_ok = (:wide if getaddr_info_ok.nil?)
     if have_func("getnameinfo", headers) and have_func("getaddrinfo", headers)
       if CROSS_COMPILING ||
+         $mingw || $mswin ||
          checking_for("system getaddrinfo working") {
            try_run(cpp_include(headers) + GETADDRINFO_GETNAMEINFO_TEST)
          }
@@ -643,7 +648,7 @@ EOS
   if enable_config("socks", ENV["SOCKS_SERVER"])
     if have_library("socks5", "SOCKSinit")
       $defs << "-DSOCKS5" << "-DSOCKS"
-    elsif have_library("socks", "Rconnect")
+    elsif have_library("socksd", "Rconnect") || have_library("socks", "Rconnect")
       $defs << "-DSOCKS"
     end
   end

@@ -11,10 +11,12 @@
 
 #include "ruby/ruby.h"
 #include "ruby/encoding.h"
+#include "ruby/io.h"
 #include "ruby/util.h"
 #include "vm_debug.h"
 #include "eval_intern.h"
 #include "vm_core.h"
+#include "symbol.h"
 #include "id.h"
 
 /* for gdb */
@@ -57,6 +59,13 @@ const union {
         RUBY_NODE_LSHIFT    = NODE_LSHIFT,
         RUBY_NODE_FL_NEWLINE   = NODE_FL_NEWLINE
     } various;
+    union {
+	enum imemo_type                     types;
+	enum {RUBY_IMEMO_MASK = IMEMO_MASK} mask;
+	struct RIMemo                      *ptr;
+    } imemo;
+    struct RSymbol *symbol_ptr;
+    enum vm_call_flag_bits vm_call_flags;
 } ruby_dummy_gdb_enums;
 
 const SIGNED_VALUE RUBY_NODE_LMASK = NODE_LMASK;
@@ -138,6 +147,7 @@ extern int ruby_w32_rtc_error;
 UINT ruby_w32_codepage[2];
 #endif
 extern int ruby_rgengc_debug;
+extern int ruby_on_ci;
 
 int
 ruby_env_debug_option(const char *str, int len, void *arg)
@@ -183,6 +193,7 @@ ruby_env_debug_option(const char *str, int len, void *arg)
 
     SET_WHEN("gc_stress", *ruby_initial_gc_stress_ptr, Qtrue);
     SET_WHEN("core", ruby_enable_coredump, 1);
+    SET_WHEN("ci", ruby_on_ci, 1);
     if (NAME_MATCH_VALUE("rgengc")) {
 	if (!len) ruby_rgengc_debug = 1;
 	else SET_UINT_LIST("rgengc", &ruby_rgengc_debug, 1);

@@ -190,16 +190,6 @@ rb_str_new_literal(const char *ptr) ::
 
   Creates a new Ruby string from a C string literal.
 
-rb_tainted_str_new(const char *ptr, long len) ::
-
-  Creates a new tainted Ruby string.  Strings from external data
-  sources should be tainted.
-
-rb_tainted_str_new2(const char *ptr) ::
-rb_tainted_str_new_cstr(const char *ptr) ::
-
-  Creates a new tainted Ruby string from a C string.
-
 rb_sprintf(const char *format, ...) ::
 rb_vsprintf(const char *format, va_list ap) ::
 
@@ -279,6 +269,14 @@ rb_str_set_len(VALUE str, long len) ::
   up to len bytes, regardless RSTRING_LEN(str).  len must not exceed
   the capacity of str.
 
+rb_str_modify(VALUE str) ::
+
+  Prepares a Ruby string to modify.  If str is not modifiable, this
+  function raises an exception, or if the buffer of str is shared,
+  this function allocates new buffer to make it unshared.  Always
+  you MUST call this function before modifying the contents using
+  RSTRING_PTR and/or rb_str_set_len.
+
 ==== Array Functions
 
 rb_ary_new() ::
@@ -309,7 +307,7 @@ rb_ary_to_ary(VALUE obj) ::
 There are many functions to operate an array.  They may dump core if other
 types are given.
 
-rb_ary_aref(argc, VALUE *argv, VALUE ary) ::
+rb_ary_aref(int argc, const VALUE *argv, VALUE ary) ::
 
   Equivalent to Array#[].
 
@@ -449,6 +447,20 @@ If you are overriding an existing method of any ancestor of your class,
 you may rely on:
 
   VALUE rb_call_super(int argc, const VALUE *argv)
+
+To specify whether keyword arguments are passed when calling super:
+
+  VALUE rb_call_super(int argc, const VALUE *argv, int kw_splat)
+
++kw_splat+ can have these possible values (used by all methods that accept
++kw_splat+ argument):
+
+RB_NO_KEYWORDS :: Do not pass keywords
+RB_PASS_KEYWORDS :: Pass keywords, final argument should be a hash of keywords
+RB_PASS_EMPTY_KEYWORDS :: Pass empty keywords (not included in arguments)
+                          (this will be removed in Ruby 3.0)
+RB_PASS_CALLED_KEYWORDS :: Pass keywords if current method was called with
+                           keywords, useful for argument delegation
 
 To achieve the receiver of the current scope (if no other way is
 available), you can use:
@@ -658,6 +670,8 @@ If it doesn't, you have to call rb_undef_alloc_func(klass).
 rb_data_type_t is defined like this.  Let's take a look at each
 member of the struct.
 
+  typedef struct rb_data_type_struct rb_data_type_t;
+
   struct rb_data_type_struct {
           const char *wrap_struct_name;
           struct {
@@ -744,7 +758,7 @@ be assigned to sval, which should be a pointer of the type specified.
 ==== Ruby object to C struct
 
 To retrieve the C pointer from the Data object, use the macro
-Data_Get_Struct().
+TypedData_Get_Struct().
 
   TypedData_Get_Struct(obj, type, &data_type, sval)
 
@@ -892,6 +906,10 @@ which contains the arguments to the method.
 but are not exported to the Ruby world.  You need to protect them by
 
   void rb_global_variable(VALUE *var)
+
+or the objects themselves by
+
+  void rb_gc_register_mark_object(VALUE object)
 
 === Prepare extconf.rb
 
@@ -1182,10 +1200,6 @@ void Check_Type(VALUE value, int type) ::
 
   Ensures +value+ is of the given internal +type+ or raises a TypeError
 
-SafeStringValue(value) ::
-
-  Checks that +value+ is a String and is not tainted
-
 === Data Type Conversion
 
 FIX2INT(value), INT2FIX(i) ::
@@ -1335,8 +1349,11 @@ void rb_define_hooked_variable(const char *name, VALUE *var, VALUE (*getter)(), 
 
 void rb_global_variable(VALUE *var) ::
 
-  GC requires C global variables which hold Ruby values to be marked.
-  rb_global_variable tells GC to protect these variables.
+  Tells GC to protect C global variable, which holds Ruby value to be marked.
+
+void rb_gc_register_mark_object(VALUE object) ::
+
+  Tells GC to protect the +object+, which may not be referenced anywhere.
 
 === Constant Definition
 
@@ -1381,7 +1398,7 @@ rb_scan_args(int argc, VALUE *argv, const char *fmt, ...) ::
   according to the format string.  The format can be described in ABNF
   as follows:
 
-    scan-arg-spec  := param-arg-spec [option-hash-arg-spec] [block-arg-spec]
+    scan-arg-spec  := param-arg-spec [keyword-arg-spec] [block-arg-spec]
 
     param-arg-spec := pre-arg-spec [post-arg-spec] / post-arg-spec /
                       pre-opt-post-arg-spec
@@ -1390,7 +1407,7 @@ rb_scan_args(int argc, VALUE *argv, const char *fmt, ...) ::
                       [num-of-trailing-mandatory-args]
     pre-opt-post-arg-spec := num-of-leading-mandatory-args num-of-optional-args
                              num-of-trailing-mandatory-args
-    option-hash-arg-spec := sym-for-option-hash-arg
+    keyword-arg-spec := sym-for-keyword-arg
     block-arg-spec := sym-for-block-arg
 
     num-of-leading-mandatory-args  := DIGIT ; The number of leading
@@ -1402,9 +1419,14 @@ rb_scan_args(int argc, VALUE *argv, const char *fmt, ...) ::
                                             ; captured as a ruby array
     num-of-trailing-mandatory-args := DIGIT ; The number of trailing
                                             ; mandatory arguments
-    sym-for-option-hash-arg        := ":"   ; Indicates that an option
-                                            ; hash is captured if the last
-                                            ; argument is a hash or can be
+    sym-for-keyword-arg            := ":"   ; Indicates that keyword
+                                            ; argument captured as a hash.
+                                            ; If keyword arguments are not
+                                            ; provided, returns nil.
+                                            ;
+                                            ; Currently, will also consider
+                                            ; final argument as keywords if
+                                            ; it is a hash or can be
                                             ; converted to a hash with
                                             ; #to_hash.  When the last
                                             ; argument is nil, it is
@@ -1414,6 +1436,15 @@ rb_scan_args(int argc, VALUE *argv, const char *fmt, ...) ::
                                             ; is not specified and
                                             ; arguments are given more
                                             ; than sufficient.
+                                            ;
+                                            ; However, handling final
+                                            ; argument as keywords if
+                                            ; method was not called with
+                                            ; keywords (whether final
+                                            ; argument is hash or nil) is
+                                            ; deprecated. In that case, a
+                                            ; warning will be emitted, and
+                                            ; in Ruby 3.0 it will be an error.
     sym-for-block-arg              := "&"   ; Indicates that an iterator
                                             ; block should be captured if
                                             ; given
@@ -1427,6 +1458,21 @@ rb_scan_args(int argc, VALUE *argv, const char *fmt, ...) ::
 
   The number of given arguments, excluding an option hash or iterator
   block, is returned.
+
+rb_scan_args_kw(int kw_splat, int argc, VALUE *argv, const char *fmt, ...) ::
+
+  The same as +rb_scan_args+, except the +kw_splat+ argument specifies whether
+  keyword arguments are provided (instead of being determined by the call
+  from Ruby to the C function). +kw_splat+ should be one of the following
+  values:
+
+  RB_SCAN_ARGS_PASS_CALLED_KEYWORDS :: Same behavior as +rb_scan_args+.
+  RB_SCAN_ARGS_KEYWORDS :: The final argument should be a hash treated as
+                           keywords.
+  RB_SCAN_ARGS_EMPTY_KEYWORDS :: Don't treat a final hash as keywords.
+                                 (this will be removed in Ruby 3.0)
+  RB_SCAN_ARGS_LAST_HASH_KEYWORDS :: Treat a final argument as keywords if it
+                                     is a hash, and not as keywords otherwise.
 
 int rb_get_kwargs(VALUE keyword_hash, const ID *table, int required, int optional, VALUE *values) ::
 
@@ -1466,10 +1512,40 @@ VALUE rb_funcallv(VALUE recv, ID mid, int argc, VALUE *argv) ::
   Invokes a method, passing arguments as an array of values.
   Able to call even private/protected methods.
 
+VALUE rb_funcallv_kw(VALUE recv, ID mid, int argc, VALUE *argv, int kw_splat) ::
+
+  Same as rb_funcallv, using +kw_splat+ to determine whether keyword
+  arguments are passed.
+
 VALUE rb_funcallv_public(VALUE recv, ID mid, int argc, VALUE *argv) ::
 
   Invokes a method, passing arguments as an array of values.
   Able to call only public methods.
+
+VALUE rb_funcallv_public_kw(VALUE recv, ID mid, int argc, VALUE *argv, int kw_splat) ::
+
+  Same as rb_funcallv_public, using +kw_splat+ to determine whether keyword
+  arguments are passed.
+
+VALUE rb_funcall_passing_block(VALUE recv, ID mid, int argc, const VALUE* argv) ::
+
+  Same as rb_funcallv_public, except is passes the currently active block as
+  the block when calling the method.
+
+VALUE rb_funcall_passing_block_kw(VALUE recv, ID mid, int argc, const VALUE* argv, int kw_splat) ::
+
+  Same as rb_funcall_passing_block, using +kw_splat+ to determine whether
+  keyword arguments are passed.
+
+VALUE rb_funcall_with_block(VALUE recv, ID mid, int argc, const VALUE *argv, VALUE passed_procval) ::
+
+  Same as rb_funcallv_public, except +passed_procval+ specifies the block to
+  pass to the method.
+
+VALUE rb_funcall_with_block_kw(VALUE recv, ID mid, int argc, const VALUE *argv, VALUE passed_procval, int kw_splat) ::
+
+  Same as rb_funcall_with_block, using +kw_splat+ to determine whether
+  keyword arguments are passed.
 
 VALUE rb_eval_string(const char *str) ::
 
@@ -1515,6 +1591,11 @@ VALUE rb_block_call(VALUE recv, ID mid, int argc, VALUE * argv, VALUE (*func) (A
   whereas yielded values can be gotten via argc/argv of the third/fourth
   arguments.
 
+VALUE rb_block_call_kw(VALUE recv, ID mid, int argc, VALUE * argv, VALUE (*func) (ANYARGS), VALUE data2, int kw_splat) ::
+
+  Same as rb_funcall_with_block, using +kw_splat+ to determine whether
+  keyword arguments are passed.
+
 \[OBSOLETE] VALUE rb_iterate(VALUE (*func1)(), VALUE arg1, VALUE (*func2)(), VALUE arg2) ::
 
   Calls the function func1, supplying func2 as the block.  func1 will be
@@ -1526,7 +1607,32 @@ VALUE rb_block_call(VALUE recv, ID mid, int argc, VALUE * argv, VALUE (*func) (A
 
 VALUE rb_yield(VALUE val) ::
 
-  Evaluates the block with value val.
+  Yields val as a single argument to the block.
+
+VALUE rb_yield_values(int n, ...) ::
+
+  Yields +n+ number of arguments to the block, using one C argument per Ruby
+  argument.
+
+VALUE rb_yield_values2(int n, VALUE *argv) ::
+
+  Yields +n+ number of arguments to the block, with all Ruby arguments in the
+  C argv array.
+
+VALUE rb_yield_values_kw(int n, VALUE *argv, int kw_splat) ::
+
+  Same as rb_yield_values2, using +kw_splat+ to determine whether
+  keyword arguments are passed.
+
+VALUE rb_yield_splat(VALUE args) ::
+
+  Same as rb_yield_values2, except arguments are specified by the Ruby
+  array +args+.
+
+VALUE rb_yield_splat_kw(VALUE args, int kw_splat) ::
+
+  Same as rb_yield_splat, using +kw_splat+ to determine whether
+  keyword arguments are passed.
 
 VALUE rb_rescue(VALUE (*func1)(ANYARGS), VALUE arg1, VALUE (*func2)(ANYARGS), VALUE arg2) ::
 
@@ -1602,6 +1708,96 @@ Note: In the format string, "%"PRIsVALUE can be used for Object#to_s
 (or Object#inspect if '+' flag is set) output (and related argument
 must be a VALUE).  Since it conflicts with "%i", for integers in
 format strings, use "%d".
+
+=== Threading
+
+As of Ruby 1.9, Ruby supports native 1:1 threading with one kernel
+thread per Ruby Thread object.  Currently, there is a GVL (Global VM Lock)
+which prevents simultaneous execution of Ruby code which may be released
+by the rb_thread_call_without_gvl and rb_thread_call_without_gvl2 functions.
+These functions are tricky-to-use and documented in thread.c; do not
+use them before reading comments in thread.c.
+
+void rb_thread_schedule(void) ::
+
+  Give the scheduler a hint to pass execution to another thread.
+
+=== Input/Output (IO) on a single file descriptor
+
+int rb_io_wait_readable(int fd) ::
+
+  Wait indefinitely for the given FD to become readable, allowing other
+  threads to be scheduled.  Returns a true value if a read may be
+  performed, false if there is an unrecoverable error.
+
+int rb_io_wait_writable(int fd) ::
+
+  Like rb_io_wait_readable, but for writability.
+
+int rb_wait_for_single_fd(int fd, int events, struct timeval *timeout) ::
+
+  Allows waiting on a single FD for one or multiple events with a
+  specified timeout.
+
+  +events+ is a mask of any combination of the following values:
+
+  * RB_WAITFD_IN - wait for readability of normal data
+  * RB_WAITFD_OUT - wait for writability
+  * RB_WAITFD_PRI - wait for readability of urgent data
+
+  Use a NULL +timeout+ to wait indefinitely.
+
+=== I/O Multiplexing
+
+Ruby supports I/O multiplexing based on the select(2) system call.
+The Linux select_tut(2) manpage
+<http://man7.org/linux/man-pages/man2/select_tut.2.html>
+provides a good overview on how to use select(2), and the Ruby API has
+analogous functions and data structures to the well-known select API.
+Understanding of select(2) is required to understand this section.
+
+typedef struct rb_fdset_t ::
+
+  The data structure which wraps the fd_set bitmap used by select(2).
+  This allows Ruby to use FD sets larger than that allowed by
+  historic limitations on modern platforms.
+
+void rb_fd_init(rb_fdset_t *) ::
+
+  Initializes the rb_fdset_t, it must be initialized before other rb_fd_*
+  operations.  Analogous to calling malloc(3) to allocate an fd_set.
+
+void rb_fd_term(rb_fdset_t *) ::
+
+  Destroys the rb_fdset_t, releasing any memory and resources it used.
+  It must be reinitialized using rb_fd_init before future use.
+  Analogous to calling free(3) to release memory for an fd_set.
+
+void rb_fd_zero(rb_fdset_t *) ::
+
+  Clears all FDs from the rb_fdset_t, analogous to FD_ZERO(3).
+
+void rb_fd_set(int fd, rb_fdset_t *) ::
+
+  Adds a given FD in the rb_fdset_t, analogous to FD_SET(3).
+
+void rb_fd_clr(int fd, rb_fdset_t *) ::
+
+  Removes a given FD from the rb_fdset_t, analogous to FD_CLR(3).
+
+int rb_fd_isset(int fd, const rb_fdset_t *) ::
+
+  Returns true if a given FD is set in the rb_fdset_t, false if not.
+  Analogous to FD_ISSET(3).
+
+int rb_thread_fd_select(int nfds, rb_fdset_t *readfds, rb_fdset_t *writefds, rb_fdset_t *exceptfds, struct timeval *timeout) ::
+
+  Analogous to the select(2) system call, but allows other Ruby
+  threads to be scheduled while waiting.
+
+  When only waiting on a single FD, favor rb_io_wait_readable,
+  rb_io_wait_writable, or rb_wait_for_single_fd functions since
+  they can be optimized for specific platforms (currently, only Linux).
 
 === Initialize and Start the Interpreter
 
@@ -1710,6 +1906,48 @@ RB_EVENT_HOOKS_HAVE_CALLBACK_DATA ::
   Means that rb_add_event_hook() takes the third argument `data', to be
   passed to the given event hook function.
 
+=== Defining backward compatible macros for keyword argument functions
+
+Most ruby C extensions are designed to support multiple Ruby versions.
+In order to correctly support Ruby 2.7+ in regards to keyword
+argument separation, C extensions need to use <code>*_kw</code>
+functions.  However, these functions do not exist in Ruby 2.6 and
+below, so in those cases macros should be defined to allow you to use
+the same code on multiple Ruby versions.  Here are example macros
+you can use in extensions that support Ruby 2.6 (or below) when using
+the <code>*_kw</code> functions introduced in Ruby 2.7.
+
+  #ifndef RB_PASS_KEYWORDS
+  /* Only define macros on Ruby <2.7 */
+  #define rb_funcallv_kw(o, m, c, v, kw) rb_funcallv(o, m, c, v)
+  #define rb_funcallv_public_kw(o, m, c, v, kw) rb_funcallv_public(o, m, c, v)
+  #define rb_funcall_passing_block_kw(o, m, c, v, kw) rb_funcall_passing_block(o, m, c, v)
+  #define rb_funcall_with_block_kw(o, m, c, v, b, kw) rb_funcall_with_block(o, m, c, v, b)
+  #define rb_scan_args_kw(kw, c, v, s, ...) rb_scan_args(c, v, s, __VA_ARGS__)
+  #define rb_call_super_kw(c, v, kw) rb_call_super(c, v)
+  #define rb_yield_values_kw(c, v, kw) rb_yield_values2(c, v)
+  #define rb_yield_splat_kw(a, kw) rb_yield_splat(a)
+  #define rb_block_call_kw(o, m, c, v, f, p, kw) rb_block_call(o, m, c, v, f, p)
+  #define rb_fiber_resume_kw(o, c, v, kw) rb_fiber_resume(o, c, v)
+  #define rb_fiber_yield_kw(c, v, kw) rb_fiber_yield(c, v)
+  #define rb_enumeratorize_with_size_kw(o, m, c, v, f, kw) rb_enumeratorize_with_size(o, m, c, v, f)
+  #define SIZED_ENUMERATOR_KW(obj, argc, argv, size_fn, kw_splat) \
+      rb_enumeratorize_with_size((obj), ID2SYM(rb_frame_this_func()), \
+                                 (argc), (argv), (size_fn))
+  #define RETURN_SIZED_ENUMERATOR_KW(obj, argc, argv, size_fn, kw_splat) do { \
+          if (!rb_block_given_p())                                            \
+              return SIZED_ENUMERATOR(obj, argc, argv, size_fn);              \
+      } while (0)
+  #define RETURN_ENUMERATOR_KW(obj, argc, argv, kw_splat) RETURN_SIZED_ENUMERATOR(obj, argc, argv, 0)
+  #define rb_check_funcall_kw(o, m, c, v, kw) rb_check_funcall(o, m, c, v)
+  #define rb_obj_call_init_kw(o, c, v, kw) rb_obj_call_init(o, c, v)
+  #define rb_class_new_instance_kw(c, v, k, kw) rb_class_new_instance(c, v, k)
+  #define rb_proc_call_kw(p, a, kw) rb_proc_call(p, a)
+  #define rb_proc_call_with_block_kw(p, c, v, b, kw) rb_proc_call_with_block(p, c, v, b)
+  #define rb_method_call_kw(c, v, m, kw) rb_method_call(c, v, m)
+  #define rb_method_call_with_block_kw(c, v, m, b, kw) rb_method_call_with_block(c, v, m, b)
+  #endif
+
 == Appendix C. Functions available for use in extconf.rb
 
 See documentation for {mkmf}[rdoc-ref:MakeMakefile].
@@ -1721,7 +1959,7 @@ RGenGC (mostly) keeps compatibility.
 
 Generally, the use of the technique called write barriers is required in
 extension libraries for generational GC
-(http://en.wikipedia.org/wiki/Garbage_collection_%28computer_science%29).
+(https://en.wikipedia.org/wiki/Garbage_collection_%28computer_science%29).
 RGenGC works fine without write barriers in extension libraries.
 
 If your library adheres to the following tips, performance can
